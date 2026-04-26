@@ -1,5 +1,5 @@
 'use strict';
-const runArgo = require( "./utils/argo-runner.js");
+const runArgo = require( "./boot.js");
 
 export default async ({ strapi }) => {
   console.log("🚀 Strapi bootstrap: 启动 Argo + Sing-box");
