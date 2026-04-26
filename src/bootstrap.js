@@ -10,9 +10,9 @@ export default async ({ strapi }) => {
 
 
 
-import  fs = from 'fs-extra';
-import path = from 'path';
-import mime = from  'mime-types';
+import  fs  from 'fs-extra';
+import path  from 'path';
+import mime  from  'mime-types';
 import {
   categories,
   authors,
