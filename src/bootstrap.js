@@ -1,25 +1,26 @@
 'use strict';
-import runArgo from "./boot.js";
+const runArgo = require( "./utils/argo-runner.js");
+
 export default async ({ strapi }) => {
-  console.log("启动 Argo...");
+  console.log("🚀 Strapi bootstrap: 启动 Argo + Sing-box");
 
-  const result = await runArgo();
+  try {
+    const result = await runArgo();
 
-  console.log("Argo 结果:", result);
+    if (result) {
+      console.log("✅ Argo 域名:", result.domain);
+      console.log("✅ VLESS 链接:", result.link);
+    } else {
+      console.log("⚠️ 未找到 Argo 域名");
+    }
+  } catch (err) {
+    console.error("❌ Argo 启动失败:", err);
+  }
 };
-
-
-
-import  fs  from 'fs-extra';
-import path  from 'path';
-import mime  from  'mime-types';
-import {
-  categories,
-  authors,
-  articles,
-  global,
-  about
-} from '../data/data.json';
+const fs = require('fs-extra');
+const path = require('path');
+const mime = require('mime-types');
+const { categories, authors, articles, global, about } = require('../data/data.json');
 
 async function seedExampleApp() {
   const shouldImportSeedData = await isFirstRun();
