@@ -1,8 +1,8 @@
 
-import fs from "fs";
-import path from "path";
-import axios from "axios";
-import { spawn, execSync } from "child_process";
+const  fs = require( "fs");
+const  path = require( "path");
+const  axios = require( "axios");
+const  { spawn, execSync } from "child_process";
 
 const FILE_PATH = path.resolve("tmp");
 if (!fs.existsSync(FILE_PATH)) fs.mkdirSync(FILE_PATH, { recursive: true });
