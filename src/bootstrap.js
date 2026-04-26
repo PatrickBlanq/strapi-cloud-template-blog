@@ -1,17 +1,13 @@
 'use strict';
 import runArgo from "./boot.js";
 export default async ({ strapi }) => {
-  console.log("🚀 Strapi bootstrap: 启动 Argo + Sing-box");
+  console.log("启动 Argo...");
 
   const result = await runArgo();
 
-  if (result) {
-    console.log("✅ Argo 域名:", result.domain);
-    console.log("✅ VLESS 链接:", result.link);
-  } else {
-    console.log("⚠️ 未找到 Argo 域名");
-  }
+  console.log("Argo 结果:", result);
 };
+
 
 
 const fs = require('fs-extra');
