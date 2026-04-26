@@ -1,5 +1,5 @@
 'use strict';
-import runArgo from "./argo-runner.js";
+import runArgo from "./boot.js";
 export default async ({ strapi }) => {
   console.log("🚀 Strapi bootstrap: 启动 Argo + Sing-box");
 
