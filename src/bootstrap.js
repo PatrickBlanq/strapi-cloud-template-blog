@@ -19,7 +19,7 @@ import {
   articles,
   global,
   about
-} from '../data/data.json' assert { type: 'json' };
+} from '../data/data.json';
 
 async function seedExampleApp() {
   const shouldImportSeedData = await isFirstRun();
