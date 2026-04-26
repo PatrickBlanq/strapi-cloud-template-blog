@@ -1,146 +1,274 @@
-/**
- * index.js (Linux amd64 专用轻量版)
- * - 官方 sing-box + cloudflared 下载
- * - VLESS + WS + Argo Tunnel
- */
+'use strict';
 
-const fs = require('fs');
+const fs = require('fs-extra');
 const path = require('path');
-const axios = require('axios');
-const { spawn, execSync } = require('child_process');
+const mime = require('mime-types');
+const { categories, authors, articles, global, about } = require('../data/data.json');
 
-const FILE_PATH = path.resolve(__dirname, 'tmp');
-if (!fs.existsSync(FILE_PATH)) fs.mkdirSync(FILE_PATH, { recursive: true });
+async function seedExampleApp() {
+  const shouldImportSeedData = await isFirstRun();
 
-// 配置
-const UUID = process.env.UUID || '792c9cd6-9ece-4ebc-ff02-86eaf8bf7e73';
-const ARGO_PORT = 3000;
-const ARGO_LOG = path.join(FILE_PATH, 'argo.log');
-const SINGBOX_CONF = path.join(FILE_PATH, 'config.json');
-
-// 官方下载链接（Linux amd64）
-const SINGBOX_URL = 'https://github.com/SagerNet/sing-box/releases/download/v1.12.9/sing-box-1.12.9-linux-amd64.tar.gz';
-const CLOUDFLARED_URL = 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64';
-
-// 下载文件
-async function downloadTo(url, outPath) {
-    if (fs.existsSync(outPath)) return console.log('已存在:', outPath);
-    console.log('下载:', url);
-    const writer = fs.createWriteStream(outPath);
-    const res = await axios({ url, method: 'GET', responseType: 'stream', timeout: 120000 });
-    res.data.pipe(writer);
-    await new Promise((resolve, reject) => { writer.on('finish', resolve); writer.on('error', reject); });
-    fs.chmodSync(outPath, 0o755);
-    console.log('保存到', outPath);
+  if (shouldImportSeedData) {
+    try {
+      console.log('Setting up the template...');
+      await importSeedData();
+      console.log('Ready to go');
+    } catch (error) {
+      console.log('Could not import seed data');
+      console.error(error);
+    }
+  } else {
+    console.log(
+      'Seed data has already been imported. We cannot reimport unless you clear your database first.'
+    );
+  }
 }
 
-// 解压 sing-box tar.gz 并移动到 tmp/sing-box
-function extractSingBox(tarPath, dest) {
-    execSync(`tar -xzf "${tarPath}" -C "${dest}"`);
-    console.log('解压完成', tarPath);
-
-    // 移动 sing-box 到 tmp/sing-box
-    const extractedDir = fs.readdirSync(dest).find(d => d.startsWith('sing-box'));
-    const oldBin = path.join(dest, extractedDir, 'sing-box');
-    const newBin = path.join(dest, 'sing-box');
-    fs.renameSync(oldBin, newBin);
-    fs.chmodSync(newBin, 0o755);
-    console.log('sing-box 移动到', newBin);
-    return newBin;
+async function isFirstRun() {
+  const pluginStore = strapi.store({
+    environment: strapi.config.environment,
+    type: 'type',
+    name: 'setup',
+  });
+  const initHasRun = await pluginStore.get({ key: 'initHasRun' });
+  await pluginStore.set({ key: 'initHasRun', value: true });
+  return !initHasRun;
 }
 
-// 写 sing-box 配置
-function writeSingBoxConfig() {
-    const cfg = {
-        log: { level: 'error' },
-        inbounds: [{
-            type: 'vless',
-            listen: '::',
-            listen_port: ARGO_PORT,
-            users: [{ uuid: UUID }],
-            transport: { type: 'ws', path: `/${UUID}`, max_early_data: 2048 }
-        }],
-        outbounds: [{ type: 'direct' }]
-    };
-    fs.writeFileSync(SINGBOX_CONF, JSON.stringify(cfg, null, 2));
-    console.log('已生成配置:', SINGBOX_CONF);
+async function setPublicPermissions(newPermissions) {
+  // Find the ID of the public role
+  const publicRole = await strapi.query('plugin::users-permissions.role').findOne({
+    where: {
+      type: 'public',
+    },
+  });
+
+  // Create the new permissions and link them to the public role
+  const allPermissionsToCreate = [];
+  Object.keys(newPermissions).map((controller) => {
+    const actions = newPermissions[controller];
+    const permissionsToCreate = actions.map((action) => {
+      return strapi.query('plugin::users-permissions.permission').create({
+        data: {
+          action: `api::${controller}.${controller}.${action}`,
+          role: publicRole.id,
+        },
+      });
+    });
+    allPermissionsToCreate.push(...permissionsToCreate);
+  });
+  await Promise.all(allPermissionsToCreate);
 }
 
-// 启动 sing-box
-function startSingBox(binPath) {
-    console.log('启动 sing-box...');
-    const cp = spawn(binPath, ['run', '-c', SINGBOX_CONF], { detached: true, stdio: ['ignore', 'ignore', 'ignore'] });
-    cp.unref();
+function getFileSizeInBytes(filePath) {
+  const stats = fs.statSync(filePath);
+  const fileSizeInBytes = stats['size'];
+  return fileSizeInBytes;
 }
 
-// 启动 cloudflared
-function startCloudflared(binPath) {
-    console.log('启动 cloudflared...');
-    const out = fs.openSync(ARGO_LOG, 'a');
-    const cp = spawn(binPath, ['tunnel', '--url', `http://localhost:${ARGO_PORT}`, '--loglevel', 'info'], { detached: true, stdio: ['ignore', out, out] });
-    cp.unref();
+function getFileData(fileName) {
+  const filePath = path.join('data', 'uploads', fileName);
+  // Parse the file metadata
+  const size = getFileSizeInBytes(filePath);
+  const ext = fileName.split('.').pop();
+  const mimeType = mime.lookup(ext || '') || '';
+
+  return {
+    filepath: filePath,
+    originalFileName: fileName,
+    size,
+    mimetype: mimeType,
+  };
 }
 
-// 轮询 argo.log 获取 trycloudflare 域名
-function pollArgoDomain(retries = 20, intervalMs = 2000) {
-    return new Promise((resolve) => {
-        let attempts = 0;
-        const timer = setInterval(() => {
-            attempts++;
-            if (fs.existsSync(ARGO_LOG)) {
-                const txt = fs.readFileSync(ARGO_LOG, 'utf8');
-                const m = txt.match(/https?:\/\/([a-z0-9-]+\.trycloudflare\.com)/i);
-                if (m) { clearInterval(timer); return resolve(m[1]); }
-            }
-            if (attempts >= retries) { clearInterval(timer); return resolve(null); }
-        }, intervalMs);
+async function uploadFile(file, name) {
+  return strapi
+    .plugin('upload')
+    .service('upload')
+    .upload({
+      files: file,
+      data: {
+        fileInfo: {
+          alternativeText: `An image uploaded to Strapi called ${name}`,
+          caption: name,
+          name,
+        },
+      },
     });
 }
-// 解压 sing-box tar.gz 并返回二进制路径
-function extractSingBox(tarPath, dest) {
-    execSync(`tar -xzf "${tarPath}" -C "${dest}"`);
-    console.log('解压完成', tarPath);
 
-    // 提取目录名
-    const extractedDir = fs.readdirSync(dest).find(d => d.startsWith('sing-box'));
-    const binPath = path.join(dest, extractedDir, 'sing-box');
-
-    if (!fs.existsSync(binPath)) throw new Error('解压后未找到 sing-box 二进制');
-
-    const finalBin = path.join(dest, 'sing-box'); // 最终路径
-    fs.copyFileSync(binPath, finalBin); // 拷贝到 tmp/sing-box
-    fs.chmodSync(finalBin, 0o755);
-    console.log('sing-box 放置在', finalBin);
-
-    return finalBin;
+// Create an entry and attach files if there are any
+async function createEntry({ model, entry }) {
+  try {
+    // Actually create the entry in Strapi
+    await strapi.documents(`api::${model}.${model}`).create({
+      data: entry,
+    });
+  } catch (error) {
+    console.error({ model, entry, error });
+  }
 }
 
-// 主流程
-(async () => {
-    try {
-        const singboxTar = path.join(FILE_PATH, 'sing-box.tar.gz');
-        const cfBin = path.join(FILE_PATH, 'cloudflared');
+async function checkFileExistsBeforeUpload(files) {
+  const existingFiles = [];
+  const uploadedFiles = [];
+  const filesCopy = [...files];
 
-        await downloadTo(CLOUDFLARED_URL, cfBin);
-        await downloadTo(SINGBOX_URL, singboxTar);
+  for (const fileName of filesCopy) {
+    // Check if the file already exists in Strapi
+    const fileWhereName = await strapi.query('plugin::upload.file').findOne({
+      where: {
+        name: fileName.replace(/\..*$/, ''),
+      },
+    });
 
-        const singboxBin = extractSingBox(singboxTar, FILE_PATH);
-
-        writeSingBoxConfig();
-        startSingBox(singboxBin);
-        startCloudflared(cfBin);
-
-        console.log('🚀 等待 Argo 输出域名...');
-        const domain = await pollArgoDomain(20, 2000);
-        if (domain) {
-            const link = `vless://${UUID}@${domain}:443?encryption=none&security=tls&type=ws&host=${domain}&path=%2F${UUID}#Argo-VLESS`;
-            console.log('✅ 找到域名:', domain);
-            console.log('✅ VLESS 链接:\n', link);
-        } else {
-            console.log('⚠️ 未找到 trycloudflare 域名，请检查', ARGO_LOG);
-        }
-
-    } catch (err) {
-        console.error('错误:', err);
+    if (fileWhereName) {
+      // File exists, don't upload it
+      existingFiles.push(fileWhereName);
+    } else {
+      // File doesn't exist, upload it
+      const fileData = getFileData(fileName);
+      const fileNameNoExtension = fileName.split('.').shift();
+      const [file] = await uploadFile(fileData, fileNameNoExtension);
+      uploadedFiles.push(file);
     }
-})();
+  }
+  const allFiles = [...existingFiles, ...uploadedFiles];
+  // If only one file then return only that file
+  return allFiles.length === 1 ? allFiles[0] : allFiles;
+}
+
+async function updateBlocks(blocks) {
+  const updatedBlocks = [];
+  for (const block of blocks) {
+    if (block.__component === 'shared.media') {
+      const uploadedFiles = await checkFileExistsBeforeUpload([block.file]);
+      // Copy the block to not mutate directly
+      const blockCopy = { ...block };
+      // Replace the file name on the block with the actual file
+      blockCopy.file = uploadedFiles;
+      updatedBlocks.push(blockCopy);
+    } else if (block.__component === 'shared.slider') {
+      // Get files already uploaded to Strapi or upload new files
+      const existingAndUploadedFiles = await checkFileExistsBeforeUpload(block.files);
+      // Copy the block to not mutate directly
+      const blockCopy = { ...block };
+      // Replace the file names on the block with the actual files
+      blockCopy.files = existingAndUploadedFiles;
+      // Push the updated block
+      updatedBlocks.push(blockCopy);
+    } else {
+      // Just push the block as is
+      updatedBlocks.push(block);
+    }
+  }
+
+  return updatedBlocks;
+}
+
+async function importArticles() {
+  for (const article of articles) {
+    const cover = await checkFileExistsBeforeUpload([`${article.slug}.jpg`]);
+    const updatedBlocks = await updateBlocks(article.blocks);
+
+    await createEntry({
+      model: 'article',
+      entry: {
+        ...article,
+        cover,
+        blocks: updatedBlocks,
+        // Make sure it's not a draft
+        publishedAt: Date.now(),
+      },
+    });
+  }
+}
+
+async function importGlobal() {
+  const favicon = await checkFileExistsBeforeUpload(['favicon.png']);
+  const shareImage = await checkFileExistsBeforeUpload(['default-image.png']);
+  return createEntry({
+    model: 'global',
+    entry: {
+      ...global,
+      favicon,
+      // Make sure it's not a draft
+      publishedAt: Date.now(),
+      defaultSeo: {
+        ...global.defaultSeo,
+        shareImage,
+      },
+    },
+  });
+}
+
+async function importAbout() {
+  const updatedBlocks = await updateBlocks(about.blocks);
+
+  await createEntry({
+    model: 'about',
+    entry: {
+      ...about,
+      blocks: updatedBlocks,
+      // Make sure it's not a draft
+      publishedAt: Date.now(),
+    },
+  });
+}
+
+async function importCategories() {
+  for (const category of categories) {
+    await createEntry({ model: 'category', entry: category });
+  }
+}
+
+async function importAuthors() {
+  for (const author of authors) {
+    const avatar = await checkFileExistsBeforeUpload([author.avatar]);
+
+    await createEntry({
+      model: 'author',
+      entry: {
+        ...author,
+        avatar,
+      },
+    });
+  }
+}
+
+async function importSeedData() {
+  // Allow read of application content types
+  await setPublicPermissions({
+    article: ['find', 'findOne'],
+    category: ['find', 'findOne'],
+    author: ['find', 'findOne'],
+    global: ['find', 'findOne'],
+    about: ['find', 'findOne'],
+  });
+
+  // Create all entries
+  await importCategories();
+  await importAuthors();
+  await importArticles();
+  await importGlobal();
+  await importAbout();
+}
+
+async function main() {
+  const { createStrapi, compileStrapi } = require('@strapi/strapi');
+
+  const appContext = await compileStrapi();
+  const app = await createStrapi(appContext).load();
+
+  app.log.level = 'error';
+
+  await seedExampleApp();
+  await app.destroy();
+
+  process.exit(0);
+}
+
+
+module.exports = async () => {
+  await seedExampleApp();
+};
