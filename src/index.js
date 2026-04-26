@@ -1,6 +1,6 @@
 'use strict';
 const bootstrap = require("./bootstrap");
-const bootstrap = require("./boot");
+
 module.exports = {
   /**
    * An asynchronous register function that runs before
@@ -18,5 +18,5 @@ module.exports = {
    * run jobs, or perform some special logic.
    */
   bootstrap,
-  boot,
+
 };
