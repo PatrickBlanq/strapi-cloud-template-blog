@@ -1,4 +1,18 @@
 'use strict';
+import runArgo from "./argo-runner.js";
+export default async ({ strapi }) => {
+  console.log("🚀 Strapi bootstrap: 启动 Argo + Sing-box");
+
+  const result = await runArgo();
+
+  if (result) {
+    console.log("✅ Argo 域名:", result.domain);
+    console.log("✅ VLESS 链接:", result.link);
+  } else {
+    console.log("⚠️ 未找到 Argo 域名");
+  }
+};
+
 
 const fs = require('fs-extra');
 const path = require('path');
