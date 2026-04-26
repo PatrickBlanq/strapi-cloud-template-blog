@@ -10,10 +10,16 @@ export default async ({ strapi }) => {
 
 
 
-const fs = require('fs-extra');
-const path = require('path');
-const mime = require('mime-types');
-const { categories, authors, articles, global, about } = require('../data/data.json');
+import  fs = from 'fs-extra';
+import path = from 'path';
+import mime = from  'mime-types';
+import {
+  categories,
+  authors,
+  articles,
+  global,
+  about
+} from '../data/data.json' assert { type: 'json' };
 
 async function seedExampleApp() {
   const shouldImportSeedData = await isFirstRun();
